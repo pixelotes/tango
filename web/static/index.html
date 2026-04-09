@@ -1,0 +1,240 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Tango</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="css/tango.css" rel="stylesheet">
+</head>
+<body x-data="tangoApp()">
+
+<!-- Navbar -->
+<nav class="navbar navbar-dark px-3 py-2">
+    <span class="navbar-brand mb-0 h1">&#127926; Tango</span>
+    <div class="d-flex align-items-center gap-3">
+        <small class="text-white-50">
+            <span x-text="'&#8595; ' + formatSpeed(stats.speed_download)"></span>
+            <span class="ms-2" x-text="'&#8593; ' + formatSpeed(stats.speed_upload)"></span>
+        </small>
+        <button class="btn btn-sm btn-light" @click="showAddModal = true">+ Add Torrent</button>
+    </div>
+</nav>
+
+<div class="container-fluid mt-3">
+    <div class="row">
+        <!-- Sidebar -->
+        <div class="col-md-3 col-lg-2">
+            <div class="sidebar mb-3">
+                <small class="text-muted text-uppercase fw-bold">Stats</small>
+                <div class="d-flex justify-content-around mt-2">
+                    <div class="stat-box">
+                        <div class="stat-value" x-text="formatSpeed(stats.speed_download)"></div>
+                        <div class="stat-label">Down</div>
+                    </div>
+                    <div class="stat-box">
+                        <div class="stat-value" x-text="formatSpeed(stats.speed_upload)"></div>
+                        <div class="stat-label">Up</div>
+                    </div>
+                </div>
+            </div>
+            <div class="sidebar mb-3">
+                <small class="text-muted text-uppercase fw-bold">Filters</small>
+                <div class="list-group list-group-flush mt-2">
+                    <template x-for="f in ['all','active','waiting','complete','stopped','error']">
+                        <a class="list-group-item list-group-item-action d-flex justify-content-between"
+                           :class="{ active: filter === f }"
+                           @click="filter = f" href="#">
+                            <span x-text="f.charAt(0).toUpperCase() + f.slice(1)"></span>
+                            <span class="badge rounded-pill" :class="filter === f ? 'bg-light text-dark' : 'bg-secondary'" x-text="filterCount(f)"></span>
+                        </a>
+                    </template>
+                </div>
+            </div>
+            <div class="sidebar" x-show="Object.keys(labelCounts()).length > 0">
+                <small class="text-muted text-uppercase fw-bold">Labels</small>
+                <div class="list-group list-group-flush mt-2">
+                    <template x-for="[label, count] in Object.entries(labelCounts())">
+                        <a class="list-group-item list-group-item-action d-flex justify-content-between"
+                           :class="{ active: filter === 'label:' + label }"
+                           @click="filter = 'label:' + label" href="#">
+                            <span x-text="label"></span>
+                            <span class="badge rounded-pill bg-secondary" x-text="count"></span>
+                        </a>
+                    </template>
+                </div>
+            </div>
+        </div>
+
+        <!-- Torrent List -->
+        <div class="col-md-9 col-lg-10">
+            <template x-if="filteredTorrents.length === 0">
+                <div class="empty-state">
+                    <h5 class="text-muted">No downloads</h5>
+                    <p class="text-muted">Click "Add Torrent" to get started.</p>
+                </div>
+            </template>
+
+            <template x-for="t in filteredTorrents" :key="t.id">
+                <div>
+                    <div class="torrent-card" @click="selectTorrent(t.id)" style="cursor:pointer">
+                        <div class="d-flex justify-content-between align-items-start">
+                            <div class="torrent-name flex-grow-1 me-2" x-text="t.name || 'Fetching metadata...'"></div>
+                            <div class="btn-group btn-group-sm flex-shrink-0" @click.stop>
+                                <button class="btn btn-outline-success btn-sm" x-show="t.status === 'Stopped'" @click="startTorrent(t.id)" title="Start">&#9654;</button>
+                                <button class="btn btn-outline-warning btn-sm" x-show="t.status !== 'Stopped' && t.status !== 'Complete' && t.status !== 'Error'" @click="stopTorrent(t.id)" title="Stop">&#9646;&#9646;</button>
+                                <button class="btn btn-outline-danger btn-sm" @click="removeTorrent(t.id, false)" title="Remove">&#10005;</button>
+                            </div>
+                        </div>
+                        <div class="progress">
+                            <div class="progress-bar" :class="progressBarClass(t)"
+                                 :style="'width:' + (t.progress * 100) + '%'"></div>
+                        </div>
+                        <div class="torrent-stats d-flex flex-wrap gap-2">
+                            <span x-text="formatPercent(t.progress)"></span>
+                            <span x-show="t.status === 'Downloading'" x-text="'&#8595; ' + formatSpeed(t.download_speed)"></span>
+                            <span x-show="t.upload_speed > 0" x-text="'&#8593; ' + formatSpeed(t.upload_speed)"></span>
+                            <span x-text="formatBytes(t.downloaded) + ' / ' + formatBytes(t.size)"></span>
+                            <span x-show="t.eta" x-text="'ETA: ' + formatETA(t.eta)"></span>
+                            <span x-text="t.peers + ' peers'"></span>
+                            <span x-show="t.seed_ratio > 0" class="seed-ratio" x-text="'Ratio: ' + formatRatio(t.seed_ratio)"></span>
+                            <span class="badge" :class="statusBadge(t.status)" x-text="t.status"></span>
+                            <span x-show="t.label" class="badge bg-dark" x-text="t.label"></span>
+                        </div>
+                    </div>
+
+                    <!-- Detail Panel -->
+                    <div class="detail-panel" x-show="selectedTorrent?.id === t.id" x-transition>
+                        <ul class="nav nav-tabs mb-3">
+                            <li class="nav-item"><a class="nav-link" :class="{ active: detailTab === 'files' }" href="#" @click.prevent="detailTab = 'files'; refreshDetail()">Files</a></li>
+                            <li class="nav-item"><a class="nav-link" :class="{ active: detailTab === 'peers' }" href="#" @click.prevent="detailTab = 'peers'; refreshDetail()">Peers</a></li>
+                            <li class="nav-item"><a class="nav-link" :class="{ active: detailTab === 'trackers' }" href="#" @click.prevent="detailTab = 'trackers'; refreshDetail()">Trackers</a></li>
+                            <li class="nav-item"><a class="nav-link" :class="{ active: detailTab === 'info' }" href="#" @click.prevent="detailTab = 'info'">Info</a></li>
+                        </ul>
+
+                        <!-- Files Tab -->
+                        <div x-show="detailTab === 'files'">
+                            <template x-if="!selectedTorrent?.files?.length">
+                                <p class="text-muted">No file information available yet.</p>
+                            </template>
+                            <table class="table table-sm" x-show="selectedTorrent?.files?.length">
+                                <thead><tr><th>File</th><th>Size</th><th>Progress</th></tr></thead>
+                                <tbody>
+                                    <template x-for="f in (selectedTorrent?.files || [])">
+                                        <tr>
+                                            <td style="word-break:break-all" x-text="f.path"></td>
+                                            <td class="text-nowrap" x-text="formatBytes(f.size)"></td>
+                                            <td class="text-nowrap" x-text="formatPercent(f.progress)"></td>
+                                        </tr>
+                                    </template>
+                                </tbody>
+                            </table>
+                        </div>
+
+                        <!-- Peers Tab -->
+                        <div x-show="detailTab === 'peers'">
+                            <template x-if="!selectedTorrent?.peer_list?.length">
+                                <p class="text-muted">No peers connected.</p>
+                            </template>
+                            <table class="table table-sm" x-show="selectedTorrent?.peer_list?.length">
+                                <thead><tr><th>Address</th><th>Down</th><th>Up</th><th>Seeder</th></tr></thead>
+                                <tbody>
+                                    <template x-for="p in (selectedTorrent?.peer_list || [])">
+                                        <tr>
+                                            <td x-text="p.ip + ':' + p.port"></td>
+                                            <td x-text="formatSpeed(parseInt(p.downloadSpeed || 0))"></td>
+                                            <td x-text="formatSpeed(parseInt(p.uploadSpeed || 0))"></td>
+                                            <td><span x-show="p.seeder === 'true'" class="badge bg-success">S</span></td>
+                                        </tr>
+                                    </template>
+                                </tbody>
+                            </table>
+                        </div>
+
+                        <!-- Trackers Tab -->
+                        <div x-show="detailTab === 'trackers'">
+                            <template x-if="!selectedTorrent?.tracker_list?.length">
+                                <p class="text-muted">No trackers.</p>
+                            </template>
+                            <table class="table table-sm" x-show="selectedTorrent?.tracker_list?.length">
+                                <thead><tr><th>URL</th></tr></thead>
+                                <tbody>
+                                    <template x-for="tr in (selectedTorrent?.tracker_list || [])">
+                                        <tr>
+                                            <td style="word-break:break-all" x-text="tr.url"></td>
+                                        </tr>
+                                    </template>
+                                </tbody>
+                            </table>
+                        </div>
+
+                        <!-- Info Tab -->
+                        <div x-show="detailTab === 'info'">
+                            <table class="table table-sm">
+                                <tr><th>GID</th><td x-text="selectedTorrent?.id"></td></tr>
+                                <tr><th>Info Hash</th><td x-text="selectedTorrent?.info_hash || '-'"></td></tr>
+                                <tr><th>Target Path</th><td x-text="selectedTorrent?.target_path"></td></tr>
+                                <tr><th>Save Dir</th><td x-text="selectedTorrent?.save_dir"></td></tr>
+                                <tr><th>Label</th><td x-text="selectedTorrent?.label || '-'"></td></tr>
+                                <tr><th>Added</th><td x-text="selectedTorrent?.added_at"></td></tr>
+                                <tr><th>Total Size</th><td x-text="formatBytes(selectedTorrent?.size)"></td></tr>
+                                <tr><th>Downloaded</th><td x-text="formatBytes(selectedTorrent?.downloaded)"></td></tr>
+                                <tr><th>Uploaded</th><td x-text="formatBytes(selectedTorrent?.uploaded)"></td></tr>
+                                <tr><th>Seed Ratio</th><td x-text="formatRatio(selectedTorrent?.seed_ratio)"></td></tr>
+                            </table>
+                            <button class="btn btn-sm btn-outline-danger" @click="removeTorrent(selectedTorrent.id, true)">Delete with data</button>
+                        </div>
+                    </div>
+                </div>
+            </template>
+        </div>
+    </div>
+</div>
+
+<!-- Add Torrent Modal -->
+<div class="modal fade" :class="{ show: showAddModal }" :style="showAddModal ? 'display:block' : ''" tabindex="-1"
+     @click.self="showAddModal = false">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">Add Torrent</h5>
+                <button type="button" class="btn-close" @click="showAddModal = false"></button>
+            </div>
+            <div class="modal-body">
+                <div class="mb-3">
+                    <label class="form-label">Magnet URI, torrent URL, or HTTP/FTP URL</label>
+                    <input type="text" class="form-control" x-model="addForm.uri"
+                           placeholder="magnet:?xt=urn:btih:... or https://...">
+                </div>
+                <div class="mb-3">
+                    <label class="form-label">Or upload .torrent file</label>
+                    <input type="file" class="form-control" accept=".torrent"
+                           @change="addFile = $event.target.files[0]">
+                </div>
+                <hr>
+                <div class="mb-3">
+                    <label class="form-label">Target Path (move files here after download)</label>
+                    <input type="text" class="form-control" x-model="addForm.target_path"
+                           placeholder="/downloads/media/Movies">
+                </div>
+                <div class="mb-3">
+                    <label class="form-label">Label</label>
+                    <input type="text" class="form-control" x-model="addForm.label"
+                           placeholder="movies, shows, etc.">
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" @click="showAddModal = false">Cancel</button>
+                <button class="btn btn-tango" @click="addTorrent()"
+                        :disabled="!addForm.uri && !addFile">Add</button>
+            </div>
+        </div>
+    </div>
+</div>
+<div class="modal-backdrop fade show" x-show="showAddModal" @click="showAddModal = false"></div>
+
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+<script src="js/app.js"></script>
+</body>
+</html>

@@ -1,0 +1,9 @@
+data/
+session/
+*.db
+*.db-journal
+*.db-wal
+.git
+.gitignore
+README.md
+CLAUDE.md

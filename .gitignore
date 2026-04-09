@@ -1,0 +1,6 @@
+tango
+data/
+session/
+*.db
+*.db-journal
+*.db-wal

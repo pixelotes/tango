@@ -1,0 +1,38 @@
+# Tango - aria2c orchestrator for Raspberry Pi
+# Lightweight download manager with seeding control
+
+# Server
+host: "0.0.0.0"
+port: 7246
+data_dir: "./data"
+database_path: "./session/tango.db"
+webui_enabled: true
+
+# aria2c settings
+aria2:
+  rpc_url: "http://127.0.0.1:6800/jsonrpc"
+  rpc_secret: ""
+  bin_path: ""           # empty = search $PATH
+  listen_port: 6881      # BitTorrent peer port
+  max_concurrent: 5
+  max_connection_per_server: 4
+  dht_enabled: true
+  pex_enabled: true
+  max_upload_speed: 0    # 0 = unlimited, bytes/sec
+  max_download_speed: 0  # 0 = unlimited, bytes/sec
+  disk_cache: 16777216   # 16 MiB
+
+# Public tracker list enrichment
+# Periodically fetches a public tracker list and auto-adds to new torrents
+trackers:
+  auto_add: false
+  list_url: "https://raw.githubusercontent.com/ngosang/trackerslist/master/trackers_all.txt"
+  update_interval: "168h"  # 1 week
+
+# Seeding control
+seeding:
+  target_ratio: 1.5          # Stop seeding at this upload/download ratio
+  max_seed_time_minutes: 0   # 0 = no time limit (ratio takes precedence)
+  check_interval_seconds: 30
+  auto_remove: false         # Auto-remove torrent after reaching ratio
+  auto_delete_data: false    # Also delete files when auto-removing
