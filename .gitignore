@@ -4,3 +4,10 @@ session/
 *.db
 *.db-journal
 *.db-wal
+
+# aria2c runtime artifacts (created next to downloads)
+dht.dat
+dht6.dat
+aria2.session
+downloads/*
+!downloads/.gitkeep
