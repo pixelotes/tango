@@ -16,6 +16,7 @@ type List struct {
 
 	mu       sync.RWMutex
 	trackers []string
+	onUpdate func([]string)
 
 	stopCh chan struct{}
 	done   chan struct{}
@@ -55,6 +56,18 @@ func (l *List) Stop() {
 	<-l.done
 }
 
+// OnUpdate registers fn to run with the tracker URLs after every successful
+// fetch. If a list is already loaded, fn runs with it right away.
+func (l *List) OnUpdate(fn func([]string)) {
+	l.mu.Lock()
+	l.onUpdate = fn
+	current := append([]string(nil), l.trackers...)
+	l.mu.Unlock()
+	if len(current) > 0 {
+		fn(current)
+	}
+}
+
 // Trackers returns the current cached tracker URLs.
 func (l *List) Trackers() []string {
 	l.mu.RLock()
@@ -87,9 +100,13 @@ func (l *List) fetch() {
 
 	l.mu.Lock()
 	l.trackers = trackers
+	fn := l.onUpdate
 	l.mu.Unlock()
 
 	log.Printf("trackerlist: loaded %d trackers from %s", len(trackers), l.url)
+	if fn != nil {
+		fn(append([]string(nil), trackers...))
+	}
 }
 
 // parseTrackerList splits the ngosang-format text (one URL per line, blank lines as separators).

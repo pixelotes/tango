@@ -351,3 +351,10 @@ func (c *Client) RemoveDownloadResult(gid string) error {
 	_, err := c.call("aria2.removeDownloadResult", gid)
 	return err
 }
+
+// ChangeGlobalOption changes aria2c options for the whole session. Downloads
+// added afterwards inherit them, whichever RPC client adds them.
+func (c *Client) ChangeGlobalOption(opts map[string]string) error {
+	_, err := c.call("aria2.changeGlobalOption", opts)
+	return err
+}

@@ -27,6 +27,21 @@ type Engine struct {
 // SetTrackerList enables public tracker injection for new downloads.
 func (e *Engine) SetTrackerList(tl *trackerlist.List) {
 	e.trackerList = tl
+	// Also make the list aria2c's global bt-tracker, so downloads added straight
+	// over JSON-RPC (e.g. Reel, which drives aria2c without Tango's REST API)
+	// get the trackers too, not only those added through AddTorrent.
+	tl.OnUpdate(e.applyGlobalTrackers)
+}
+
+// applyGlobalTrackers sets aria2c's session-wide bt-tracker to the baseline
+// trackers plus trackers.
+func (e *Engine) applyGlobalTrackers(trackers []string) {
+	all := append(append([]string(nil), aria2.BaselineTrackers...), trackers...)
+	if err := e.client.ChangeGlobalOption(map[string]string{"bt-tracker": strings.Join(all, ",")}); err != nil {
+		log.Printf("trackerlist: setting aria2c global bt-tracker failed: %v", err)
+		return
+	}
+	log.Printf("trackerlist: %d trackers set as aria2c's global bt-tracker", len(all))
 }
 
 // injectTrackers merges public tracker URLs into the aria2c download options.

@@ -5,6 +5,7 @@ import (
 	"log"
 	"os"
 	"os/exec"
+	"strings"
 	"time"
 )
 
@@ -33,6 +34,15 @@ type ProcessConfig struct {
 	MaxDownSpeed   int
 	DiskCache      int64
 	SeedRatio      float64
+}
+
+// BaselineTrackers are always active, so a fresh install has peer and metadata
+// sources before any public tracker list is loaded.
+var BaselineTrackers = []string{
+	"udp://router.bittorrent.com:6881/announce",
+	"udp://router.utorrent.com:6881/announce",
+	"udp://dht.transmissionbt.com:6881/announce",
+	"udp://dht.libtorrent.org:25401/announce",
 }
 
 // NewProcess creates a new aria2c process manager.
@@ -67,7 +77,7 @@ func NewProcess(cfg ProcessConfig) *Process {
 		"--dht-entry-point=router.bittorrent.com:6881",
 		"--dht-entry-point6=dht.transmissionbt.com:6881",
 		// Public trackers as baseline peer/metadata sources (always active)
-		"--bt-tracker=udp://router.bittorrent.com:6881/announce,udp://router.utorrent.com:6881/announce,udp://dht.transmissionbt.com:6881/announce,udp://dht.libtorrent.org:25401/announce",
+		"--bt-tracker=" + strings.Join(BaselineTrackers, ","),
 		// Persist DHT routing table alongside the download dir
 		fmt.Sprintf("--dht-file-path=%s/dht.dat", cfg.DownloadDir),
 		fmt.Sprintf("--dht-file-path6=%s/dht6.dat", cfg.DownloadDir),
