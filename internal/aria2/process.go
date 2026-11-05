@@ -22,6 +22,7 @@ type ProcessConfig struct {
 	BinPath        string
 	RPCPort        int
 	RPCSecret      string
+	RPCListenAll   bool
 	DownloadDir    string
 	ListenPort     int
 	MaxConcurrent  int
@@ -45,7 +46,7 @@ func NewProcess(cfg ProcessConfig) *Process {
 		// RPC
 		"--enable-rpc=true",
 		fmt.Sprintf("--rpc-listen-port=%d", cfg.RPCPort),
-		"--rpc-listen-all=false",
+		fmt.Sprintf("--rpc-listen-all=%t", cfg.RPCListenAll),
 		// Downloads
 		fmt.Sprintf("--dir=%s", cfg.DownloadDir),
 		fmt.Sprintf("--max-concurrent-downloads=%d", cfg.MaxConcurrent),

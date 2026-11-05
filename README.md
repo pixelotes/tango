@@ -69,6 +69,8 @@ webui_enabled: true
 
 aria2:
   rpc_url: "http://127.0.0.1:6800/jsonrpc"
+  rpc_secret: ""                 # set one if you open the RPC to other hosts
+  rpc_listen_all: false          # true = bind JSON-RPC on 0.0.0.0 (e.g. for Reel in another container)
   listen_port: 6881
   max_concurrent: 5
   dht_enabled: true

@@ -27,6 +27,10 @@ type TrackersConfig struct {
 type Aria2Config struct {
 	RPCUrl    string `yaml:"rpc_url"`
 	RPCSecret string `yaml:"rpc_secret"`
+	// Bind the JSON-RPC endpoint on all interfaces instead of loopback only.
+	// Needed when another container (e.g. Reel) drives aria2c directly.
+	// Always pair it with rpc_secret.
+	RPCListenAll bool `yaml:"rpc_listen_all"`
 	// Path to aria2c binary (empty = search $PATH)
 	BinPath string `yaml:"bin_path"`
 	// aria2c listen port for BitTorrent peers

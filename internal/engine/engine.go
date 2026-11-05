@@ -49,6 +49,7 @@ func New(cfg config.Config, db *database.DB) (*Engine, error) {
 		BinPath:        cfg.Aria2.BinPath,
 		RPCPort:        rpcPort,
 		RPCSecret:      cfg.Aria2.RPCSecret,
+		RPCListenAll:   cfg.Aria2.RPCListenAll,
 		DownloadDir:    cfg.DataDir,
 		ListenPort:     cfg.Aria2.ListenPort,
 		MaxConcurrent:  cfg.Aria2.MaxConcurrent,
