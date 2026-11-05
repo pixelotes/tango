@@ -1,6 +1,7 @@
 services:
   tango:
     build: .
+    image: pixelotes/opsdeck:arm64
     container_name: tango
     restart: unless-stopped
     ports:
