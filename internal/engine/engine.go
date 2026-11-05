@@ -215,22 +215,54 @@ func (e *Engine) ListTorrents() []*TangoDownload {
 	return downloads
 }
 
-func (e *Engine) RemoveTorrent(gid string, deleteData bool) error {
-	// Try to remove from aria2c (active or waiting)
-	if _, err := e.client.Remove(gid); err != nil {
-		// Maybe it's already stopped — try to clean the result
-		e.client.RemoveDownloadResult(gid)
+// gidChain returns gid followed by the downloads it handed over to: a magnet's
+// metadata GID or an HTTP .torrent GID is followed by the content GID. Clients
+// often hold the first GID (it is what addUri returned), so removing only that
+// one would leave the real download seeding.
+func (e *Engine) gidChain(gid string) []string {
+	chain := []string{gid}
+	seen := map[string]bool{gid: true}
+	for cur := gid; len(chain) < 5; {
+		next := ""
+		if status, err := e.client.TellStatus(cur); err == nil && len(status.FollowedBy) > 0 {
+			next = status.FollowedBy[0]
+		} else if meta, err := e.db.GetDownload(cur); err == nil && meta.ContentGID != "" {
+			next = meta.ContentGID
+		}
+		if next == "" || seen[next] {
+			break
+		}
+		chain = append(chain, next)
+		seen[next] = true
+		cur = next
 	}
+	return chain
+}
 
-	if deleteData {
-		// Get status to find download directory
-		status, err := e.client.TellStatus(gid)
-		if err == nil && status.Dir != "" {
+func (e *Engine) RemoveTorrent(gid string, deleteData bool) error {
+	chain := e.gidChain(gid)
+
+	// Content first, then the metadata/.torrent downloads that led to it.
+	for i := len(chain) - 1; i >= 0; i-- {
+		g := chain[i]
+		var status *aria2.Status
+		if deleteData {
+			// Read the status before removing so the download directory is known.
+			status, _ = e.client.TellStatus(g)
+		}
+
+		// Try to remove from aria2c (active or waiting)
+		if _, err := e.client.Remove(g); err != nil {
+			// Maybe it's already stopped — try to clean the result
+			e.client.RemoveDownloadResult(g)
+		}
+
+		if deleteData && status != nil && status.Dir != "" {
 			removeDownloadFiles(status)
 		}
-	}
 
-	e.db.DeleteDownload(gid)
+		e.db.DeleteDownload(g)
+	}
 	return nil
 }
 
