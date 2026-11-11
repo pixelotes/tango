@@ -69,6 +69,7 @@ func New(cfg config.Config, db *database.DB) (*Engine, error) {
 		ListenPort:     cfg.Aria2.ListenPort,
 		MaxConcurrent:  cfg.Aria2.MaxConcurrent,
 		MaxConnPerSrv:  cfg.Aria2.MaxConnectionPerServer,
+		MinSplitSize:   cfg.Aria2.MinSplitSize,
 		DHTEnabled:     cfg.Aria2.DHTEnabled,
 		PEXEnabled:     cfg.Aria2.PEXEnabled,
 		MaxUploadSpeed: cfg.Aria2.MaxUploadSpeed,

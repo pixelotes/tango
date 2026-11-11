@@ -28,6 +28,7 @@ type ProcessConfig struct {
 	ListenPort     int
 	MaxConcurrent  int
 	MaxConnPerSrv  int
+	MinSplitSize   string
 	DHTEnabled     bool
 	PEXEnabled     bool
 	MaxUploadSpeed int
@@ -64,23 +65,16 @@ func NewProcess(cfg ProcessConfig) *Process {
 		"--continue=true",
 		// BitTorrent
 		fmt.Sprintf("--listen-port=%d", cfg.ListenPort),
-		fmt.Sprintf("--dht-listen-port=%d", cfg.ListenPort),
-		"--enable-dht=true",
-		"--enable-dht6=true",
-		"--enable-peer-exchange=true",
+		fmt.Sprintf("--enable-dht=%t", cfg.DHTEnabled),
+		fmt.Sprintf("--enable-dht6=%t", cfg.DHTEnabled),
+		fmt.Sprintf("--enable-peer-exchange=%t", cfg.PEXEnabled),
 		"--bt-enable-lpd=true",
 		"--bt-save-metadata=true",
 		"--bt-load-saved-metadata=true",
 		"--bt-detach-seed-only=true",
 		"--follow-torrent=mem",
-		// DHT bootstrap nodes (required for fresh installs with no dht.dat)
-		"--dht-entry-point=router.bittorrent.com:6881",
-		"--dht-entry-point6=dht.transmissionbt.com:6881",
 		// Public trackers as baseline peer/metadata sources (always active)
 		"--bt-tracker=" + strings.Join(BaselineTrackers, ","),
-		// Persist DHT routing table alongside the download dir
-		fmt.Sprintf("--dht-file-path=%s/dht.dat", cfg.DownloadDir),
-		fmt.Sprintf("--dht-file-path6=%s/dht6.dat", cfg.DownloadDir),
 		// Seeding: Tango's monitor enforces limits, let aria2c seed up to ratio
 		fmt.Sprintf("--seed-ratio=%.2f", cfg.SeedRatio),
 		// Keep completed/stopped downloads queryable
@@ -97,6 +91,29 @@ func NewProcess(cfg ProcessConfig) *Process {
 		args = append(args, fmt.Sprintf("--input-file=%s", sessionFile))
 	}
 
+	if cfg.DHTEnabled {
+		args = append(args,
+			fmt.Sprintf("--dht-listen-port=%d", cfg.ListenPort),
+			// Bootstrap nodes (required for fresh installs with no dht.dat)
+			"--dht-entry-point=router.bittorrent.com:6881",
+			"--dht-entry-point6=dht.transmissionbt.com:6881",
+			// Persist the routing table alongside the download dir
+			fmt.Sprintf("--dht-file-path=%s/dht.dat", cfg.DownloadDir),
+			fmt.Sprintf("--dht-file-path6=%s/dht6.dat", cfg.DownloadDir),
+		)
+	}
+	// aria2c accepts 1-16 connections per server; out-of-range values make it exit.
+	if cfg.MaxConnPerSrv > 0 {
+		n := cfg.MaxConnPerSrv
+		if n > 16 {
+			log.Printf("aria2: max_connection_per_server %d is above aria2c's limit, using 16", n)
+			n = 16
+		}
+		args = append(args, fmt.Sprintf("--max-connection-per-server=%d", n))
+	}
+	if cfg.MinSplitSize != "" {
+		args = append(args, fmt.Sprintf("--min-split-size=%s", cfg.MinSplitSize))
+	}
 	if cfg.RPCSecret != "" {
 		args = append(args, fmt.Sprintf("--rpc-secret=%s", cfg.RPCSecret))
 	}
