@@ -7,3 +7,12 @@ session/
 .gitignore
 README.md
 CLAUDE.md
+tango
+.github
+.dockerignore
+*.md
+docs/
+downloads/
+.DS_Store
+.env
+*.log

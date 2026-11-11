@@ -1,149 +1,171 @@
 # Tango
 
-A lightweight orchestrator that wraps [aria2c](https://aria2.github.io/) and turns it into a self-contained download daemon: a single Go binary, a REST API, an embedded web UI, automatic seeding control, and per-download target paths.
+Tango is a web UI and REST API around [aria2c](https://aria2.github.io/) that adds tracker injection, seeding control and per-download target paths on top of aria2's JSON-RPC.
 
-Designed to run comfortably on a Raspberry Pi 3B (1 GB RAM) and to be driven from other tools (e.g. [Reel](https://github.com/pixelotes/reel)) via HTTP.
+Part of [MangoStack](https://github.com/pixelotes/MangoStack), a self-hosted media stack for the Raspberry Pi.
 
-> **Tango is not a fork of aria2.** It spawns `aria2c` as a child process and talks to it over its built-in JSON-RPC interface on `localhost:6800`. aria2c does the heavy lifting; Tango adds the orchestration that aria2c doesn't ship with.
+Tango is not a fork of aria2. It starts `aria2c` as a child process, talks to it over JSON-RPC on `127.0.0.1:6800`, and restarts it if it crashes.
 
-## What it does
+## Footprint
 
-aria2c is a great multi-protocol downloader (BitTorrent, HTTP, FTP, Metalink) but it's a low-level tool. It doesn't move files after completion, doesn't enforce a global seeding policy across torrents, and its JSON-RPC API is not what most clients expect.
+The container runs two processes: the Go server (static binary, `CGO_ENABLED=0`) and the `aria2c` child.
 
-Tango fills those gaps:
+- MangoStack measured about 26 MB RSS idle for the whole container (Tango plus aria2c), with a 192 MB memory limit and the shipped settings tuned for a Raspberry Pi 3B (`disk_cache: 16777216`, `max_concurrent: 5`).
+- Most of the memory under load is aria2c's: its disk cache (`aria2.disk_cache`, 16 MiB by default), the number of active downloads (`aria2.max_concurrent`) and their peers. The Go server stays small; it holds the download list and polls aria2c.
+- Tracker enrichment (`trackers.auto_add`) adds a periodic HTTP fetch and keeps the tracker list in memory.
 
-- **Per-download target paths.** Every download can carry a `target_path`. When a torrent finishes, Tango moves the files there — hardlinking when possible, falling back to copy + delete across filesystems.
-- **Seeding policy.** A background monitor enforces a configurable upload ratio and/or a maximum seed time, with optional auto-removal (and optional data deletion).
-- **REST API.** A small, opinionated HTTP API (see [docs/api.md](docs/api.md)) — not a clone of qBittorrent's or Transmission's. It's shaped around what consumers actually need.
-- **Embedded web UI.** Alpine.js + Bootstrap 5 served from the same binary via `go:embed`. No separate static files to ship.
-- **Process supervision.** Tango watches the `aria2c` subprocess and restarts it if it crashes. The aria2c session file is persisted to disk so in-flight downloads survive a restart.
-- **Tracker enrichment (optional).** Periodically fetches a public tracker list (default: [ngosang/trackerslist](https://github.com/ngosang/trackerslist)) and injects it into every new torrent.
-- **Magnet metadata handling.** Magnet-link metadata downloads are followed transparently: the user-facing GID stays stable, metadata (target path, label) is inherited by the real content GID.
+CPU is negligible at idle; under load it is aria2c hashing and moving data.
 
-## Why a custom API (and not qBittorrent's)
+Disk writes:
 
-This was a deliberate choice. qBittorrent's WebUI API is huge, partially undocumented, and shaped by its own internal model (categories, save paths, queue priorities, file priorities with magic integers, …). Most of it is irrelevant for a headless downloader being driven by another program.
+- SQLite database at `database_path` (default `./session/tango.db`, WAL mode): download metadata (target path, label, ratio, moved flag).
+- In `data_dir`: the downloads themselves, `aria2.session` (saved every 30 s, reloaded at start so downloads survive a restart), `dht.dat` and `dht6.dat` (when DHT is enabled), and saved torrent metadata (`--bt-save-metadata`).
+- At `target_path`: finished files, hardlinked when possible, otherwise copied and the original deleted.
 
-Tango exposes a small JSON surface: add a download, list downloads, get one, pause/resume, delete. That's almost it. The response shape is flat, well-typed, and consistent across endpoints — no `null` vs `"-1"` vs empty-string disagreements, no separate "preferences" endpoint to discover where files actually went.
+## Features
 
-See [docs/api.md](docs/api.md) for the full reference.
+- Starts and supervises `aria2c`; restarts it if it exits.
+- Per-download `target_path`: finished downloads are moved there (hardlink, falling back to copy + delete across filesystems). The check runs every 10 seconds.
+- Seeding policy: a monitor checks seeding torrents every `check_interval_seconds` and pauses them at `target_ratio` or after `max_seed_time_minutes`; optionally removes them (`auto_remove`) and their data (`auto_delete_data`).
+- Tracker injection: a built-in baseline tracker list is always passed to aria2c. With `trackers.auto_add`, Tango also fetches a public list (default [ngosang/trackerslist](https://github.com/ngosang/trackerslist)) and sets it as aria2c's global `bt-tracker`, so it applies to every new torrent.
+- Magnet links: the GID returned to the client stays stable when aria2c switches from the metadata download to the real content; target path and label carry over.
+- REST API (see [docs/api.md](docs/api.md)), compatible with the Storm API, so clients with a Storm client can drive Tango.
+- Embedded web UI (Alpine.js + Bootstrap 5, served from the binary via `go:embed`).
 
 ## Quick start
 
-### Docker (recommended)
-
-```bash
-docker compose up -d
+```yaml
+services:
+  tango:
+    image: pixelotes/tango:latest
+    container_name: tango
+    restart: unless-stopped
+    ports:
+      - "7246:7246"
+      - "6881:6881"
+      - "6881:6881/udp"
+    volumes:
+      - ./config.yaml:/tango/config.yaml:ro
+      - ./session:/tango/session
+      - ./downloads:/tango/data
 ```
 
-Then open `http://localhost:7246` for the web UI, or hit `http://localhost:7246/api/health`.
+Use [config.docker.yaml](config.docker.yaml) as `config.yaml`; it sets `data_dir: /tango/data`, `database_path: /tango/session/tango.db` and `bin_path: /usr/bin/aria2c`. The config file is required: Tango exits if it cannot read it.
 
-Bind mounts in [docker-compose.yml](docker-compose.yml):
-- `./downloads` → aria2c's working directory (where files land, plus `dht.dat`, `dht6.dat`, `aria2.session`)
-- `session` (named volume) → SQLite database
-- `./config.docker.yaml` → mounted read-only as `/tango/config.yaml`
+Images are published as `pixelotes/tango:latest` and `pixelotes/tango:<last 8 chars of the commit SHA>`, for linux/amd64 and linux/arm64.
 
-Exposed ports:
-- `7246/tcp` — API + web UI
-- `6881/tcp` + `6881/udp` — BitTorrent peer/DHT port
+Then open `http://localhost:7246`, or check `http://localhost:7246/api/health`. Ports: `7246/tcp` for the API and web UI, `6881/tcp+udp` for BitTorrent peers and DHT.
 
-### From source
-
-```bash
-go build -o tango .
-./tango --config config.yaml
-```
-
-You'll need `aria2c` on `$PATH` (or set `aria2.bin_path` in the config).
+Inside MangoStack it is already wired in `docker-compose.yaml`, with the downloads directory under `/storage`.
 
 ## Configuration
 
-See [config.yaml](config.yaml) for the full annotated example. Highlights:
+A YAML file passed with `--config` (default `config.yaml`). `--port` overrides `port`. There are no environment variables and no `${VAR}` substitution. Defaults come from `internal/config/config.go`:
 
 ```yaml
 host: "0.0.0.0"
 port: 7246
-data_dir: "./data"               # aria2c's working dir
+data_dir: "./data"                  # aria2c --dir: downloads, aria2.session, dht.dat
 database_path: "./session/tango.db"
-webui_enabled: true
+webui_enabled: true                 # false = API only
 
 aria2:
   rpc_url: "http://127.0.0.1:6800/jsonrpc"
-  rpc_secret: ""                 # set one if you open the RPC to other hosts
-  rpc_listen_all: false          # true = bind JSON-RPC on 0.0.0.0 (e.g. for Reel in another container)
-  listen_port: 6881
+  rpc_secret: ""                    # set it if rpc_listen_all is true
+  rpc_listen_all: false             # bind aria2's JSON-RPC on all interfaces
+  bin_path: ""                      # empty = search $PATH
+  listen_port: 6881                 # BitTorrent and DHT port
   max_concurrent: 5
-  dht_enabled: true
-  pex_enabled: true
-  disk_cache: 16777216           # 16 MiB — tuned for Pi
+  max_upload_speed: 0               # bytes/s, 0 = unlimited
+  max_download_speed: 0             # bytes/s, 0 = unlimited
+  disk_cache: 16777216              # bytes (16 MiB)
+  dht_enabled: true                 # DHT and DHT6 (also controls dht.dat)
+  pex_enabled: true                 # peer exchange
+  max_connection_per_server: 4      # HTTP/FTP downloads, 1-16
+  min_split_size: "10M"             # HTTP/FTP downloads
 
 trackers:
-  auto_add: false                # set true to enrich new torrents with public trackers
+  auto_add: false
   list_url: "https://raw.githubusercontent.com/ngosang/trackerslist/master/trackers_all.txt"
-  update_interval: "168h"
+  update_interval: "168h"           # Go duration
 
 seeding:
-  target_ratio: 1.5              # stop seeding at 1.5x
-  max_seed_time_minutes: 0       # 0 = no time limit
+  target_ratio: 1.5                 # also passed to aria2c as --seed-ratio
+  max_seed_time_minutes: 0          # 0 = no time limit
   check_interval_seconds: 30
-  auto_remove: false             # remove torrent from list after target ratio
-  auto_delete_data: false        # …and also delete files
+  auto_remove: false
+  auto_delete_data: false
 ```
 
-Override the port with `--port`:
+Local peer discovery (LPD) is always on.
 
-```bash
-./tango --config config.yaml --port 8080
-```
+## Usage
 
-## Seeding control
+### Web UI
 
-aria2c has a `--seed-ratio` flag, but it's per-download and aria2c doesn't restart-seed or globally enforce limits across the queue. Tango runs its own monitor goroutine that polls active torrents every `check_interval_seconds`:
+`http://<host>:7246`: list, add (magnet/URL or `.torrent` file), pause, resume and remove downloads.
 
-1. For each torrent in seeding state, compute `uploaded / downloaded`.
-2. Persist the current ratio in SQLite.
-3. If the ratio crosses `target_ratio`:
-   - `auto_remove: false` → pause the torrent.
-   - `auto_remove: true` → force-remove from aria2c (optionally delete the files too).
-4. If `max_seed_time_minutes > 0` and the elapsed time since completion exceeds it, pause.
+### REST API
 
-## Completion handler
-
-Every 10 seconds, the engine looks for stopped/complete downloads whose `target_path` differs from aria2c's `dir`. For each:
-
-1. Try `os.Link` (hardlink) — instant, no extra disk space.
-2. If that fails (cross-filesystem, etc.), fall back to copy + delete.
-3. Mark the download as moved in SQLite so it isn't re-processed.
-
-This lets you keep aria2c's `data_dir` on a fast disk and move finished files to bulk storage, all driven by the `target_path` you set when adding the download.
-
-## REST API
-
-Full reference: **[docs/api.md](docs/api.md)**.
-
-Summary:
+Full reference: [docs/api.md](docs/api.md).
 
 | Method | Path | Purpose |
 |---|---|---|
-| `GET` | `/api/health` | Liveness + version + torrent count |
-| `GET` | `/api/stats` | Global speed and counters |
-| `GET` | `/api/torrents` | List all downloads |
+| `GET` | `/api/health` | Liveness, version, torrent count |
+| `GET` | `/api/stats` | Global speeds and counters |
+| `GET` | `/api/torrents` | List downloads |
 | `POST` | `/api/torrents` | Add a magnet/HTTP/FTP URI |
 | `POST` | `/api/torrents/file` | Add a `.torrent` file (multipart) |
-| `GET` | `/api/torrents/{id}` | One download with files/peers/trackers |
+| `GET` | `/api/torrents/{id}` | One download with files, peers, trackers |
 | `DELETE` | `/api/torrents/{id}?delete_data=true` | Remove |
 | `POST` | `/api/torrents/{id}/start` | Resume |
 | `POST` | `/api/torrents/{id}/stop` | Pause |
-| `GET` | `/api/torrents/{id}/files` | File list with per-file progress |
+| `GET` | `/api/torrents/{id}/files` | Files with per-file progress |
 | `GET` | `/api/torrents/{id}/peers` | Connected peers |
-| `GET` | `/api/torrents/{id}/trackers` | Tracker list |
+| `GET` | `/api/torrents/{id}/trackers` | Trackers |
+| `POST` | `/api/torrents/{id}/trackers` | Accepted as a no-op (Tango injects trackers itself) |
 
-CORS is open (`*`) — the daemon is meant to be run on a trusted LAN and consumed by other tools. There's no built-in authentication; if you expose it publicly, put it behind a reverse proxy with auth.
+CORS is open (`*`).
 
-## Status
+### Reel
 
-Pre-1.0. The HTTP surface is small and stable in practice (it's what Reel uses), but breaking changes are still possible. Pin a commit if you build against it.
+[Reel](https://github.com/pixelotes/reel) drives Tango with its `storm` torrent client type, because Tango implements the same REST API as Storm. Downloads added that way get Tango's tracker injection and per-download paths:
+
+```yaml
+torrent_client:
+  type: "storm"
+  host: "http://tango:7246"
+```
+
+## Building from source
+
+```bash
+go build -trimpath -o tango .
+./tango --config config.yaml
+```
+
+Requires Go 1.27 (see `go.mod`) and `aria2c` on `$PATH` (or `aria2.bin_path`).
+
+## Limits
+
+- Do not expose Tango to the internet; it assumes a trusted LAN. The API has no authentication and CORS allows any origin. Put it behind an authenticating reverse proxy if it must be reachable from elsewhere.
+- If you set `rpc_listen_all: true`, aria2's JSON-RPC is reachable from the network; always set `rpc_secret`.
+- Pre-1.0: the API is what Reel uses and is stable in practice, but breaking changes are possible.
+
+## Part of MangoStack
+
+| App | Role |
+|---|---|
+| [Scarf](https://github.com/pixelotes/scarf) | Indexer proxy (Torznab) |
+| [Parasol](https://github.com/pixelotes/parasol) | Optional Cloudflare solver for Scarf |
+| [Reel](https://github.com/pixelotes/reel) | Movie & TV automation |
+| [Tango](https://github.com/pixelotes/tango) | Web UI and REST API for aria2c |
+| [RMS](https://github.com/pixelotes/rms) | Media server (Jellyfin API) |
+| [Suika](https://github.com/pixelotes/suika) | Manga reader |
+| [Kaze](https://github.com/pixelotes/kaze) | Music server (Subsonic API) |
+| [Sumi](https://github.com/pixelotes/sumi) | EPUB reader |
+| [Dashboarr](https://github.com/pixelotes/dashboarr) | Homepage |
 
 ## License
 
-See repository.
+MIT

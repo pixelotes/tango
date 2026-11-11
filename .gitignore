@@ -1,4 +1,4 @@
-tango
+/tango
 data/
 session/
 *.db
@@ -11,3 +11,23 @@ dht6.dat
 aria2.session
 downloads/*
 !downloads/.gitkeep
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*.swo
+*.log
+.env
+.env.*
+!.env.example
+
+# Go build output
+*.exe
+*.test
+*.out
+/dist/
+coverage.out
+coverage.html

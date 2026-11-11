@@ -1,0 +1,67 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: go vet
+        run: go vet ./...
+
+      - name: go build
+        run: go build -trimpath ./...
+
+      - name: go test
+        run: go test ./...
+
+      - name: Docker build
+        run: docker build -t tango-smoke .
+
+      - name: Smoke test — API health and web UI
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/tango-ci/session /tmp/tango-ci/data
+          chmod 777 /tmp/tango-ci/session /tmp/tango-ci/data
+          docker run -d --rm --name tango-smoke \
+            -p 7246:7246 \
+            -v "$PWD/config.docker.yaml:/tango/config.yaml:ro" \
+            -v /tmp/tango-ci/session:/tango/session \
+            -v /tmp/tango-ci/data:/tango/data \
+            tango-smoke
+
+          for i in $(seq 1 30); do
+            if curl -fs -o /dev/null http://localhost:7246/api/health; then
+              echo "tango is up after ${i}s"
+              break
+            fi
+            sleep 1
+          done
+
+          curl -fsS http://localhost:7246/api/health
+          body=$(curl -fsS http://localhost:7246/)
+          grep -q '<title>Tango' <<< "$body" \
+            || { echo "::error::web UI missing <title>Tango"; exit 1; }
+          echo "web UI present ✓"
+
+      - name: Container logs
+        if: always()
+        run: docker logs tango-smoke || true
+
+      - name: Stop container
+        if: always()
+        run: docker stop tango-smoke || true
